@@ -1,0 +1,4 @@
+aiogram
+python-dotenv
+asyncpg
+psycopg2-binary

@@ -1,0 +1,6 @@
+/venv
+/bot/.env
+/bot/finance.py
+/bot/test_db.py
+/bot/test_func.py
+/.idea

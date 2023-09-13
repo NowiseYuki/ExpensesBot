@@ -1,4 +1,5 @@
 /venv
+/bot/__pycache__
 /bot/.env
 /bot/finance.py
 /bot/test_db.py

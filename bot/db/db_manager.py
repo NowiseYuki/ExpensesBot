@@ -1,7 +1,7 @@
 import datetime
-
 import psycopg2
-from bot.utils import Spending
+from finance import Finance
+from env_conf import DB_PARAMS
 
 
 class DBmanager:
@@ -36,15 +36,16 @@ class DBmanager:
             except psycopg2.Error:
                 print("create_query_CONNECTION/CURSOR CLOSE ERROR")
 
-    def insert_query(self, spending):
+    # ADD FINANCE
+    def insert_query(self, finance):
         try:
             connection = psycopg2.connect(**self.__dict__)
             cursor = connection.cursor()
             try:
-                title, price, dt = spending.get_params()
+                isIncome, amount, from_to, description = finance.get_params()
                 INSERT_QUERY = f"""
-                                INSERT INTO spendings (title, price, dt)
-                                VALUES ('{title}', {price}, '{dt}');
+                                INSERT INTO finances (isIncome, amount, from_to, description_)
+                                VALUES ('{isIncome}', {amount}, '{from_to}', '{description}');
                                 """
                 cursor.execute(INSERT_QUERY)
             except psycopg2.Error:
@@ -59,40 +60,73 @@ class DBmanager:
             except psycopg2.Error:
                 print("insert_query_CONNECTION/CURSOR CLOSE ERROR")
 
-    # 0 - day
-    # 1 - week
-    # 2 - month
-    # 3 - year
-    def select_query(self, param=0):
+    # param = 0 (all finances for today)
+    # param = 1 (all finances for specific date)
+    # param = 2 (all finances for week)
+    # param = 3 (all finances for month)
+    def select_query(self):
         data = None
         try:
             connection = psycopg2.connect(**self.__dict__)
             cursor = connection.cursor()
             try:
-                match param:
-                    case 0:
-                        SELECT_QUERY = f"""
-                                        SELECT title, price, TO_CHAR(dt, 'HH24:MI:SS') AS datetime 
-                                        FROM spendings 
-                                        WHERE DATE(dt) = CURRENT_DATE;
-                                        """
-                        cursor.execute(SELECT_QUERY)
-                        data = cursor.fetchone()
-                        print(data)
-                    case _:
-                        print("No Params")
+                SELECT_QUERY = f"""
+                                SELECT isIncome, amount, from_to, description_, TO_CHAR(dt, 'HH24:MI:SS') AS datetime 
+                                FROM finances 
+                                WHERE DATE(dt) = CURRENT_DATE;
+                                """
+                cursor.execute(SELECT_QUERY)
+                data = cursor.fetchone()
+                print(data)
+
             except psycopg2.Error:
-                print("insert_query_EXECUTE ERROR")
+                print("select_query_EXECUTE ERROR")
         except psycopg2.Error:
-            print("insert_query_CONNECTION/CURSOR ERROR")
+            print("select_query_CONNECTION/CURSOR ERROR")
         else:
             try:
                 connection.commit()
                 cursor.close()
                 connection.close()
             except psycopg2.Error:
-                print("insert_query_CONNECTION/CURSOR CLOSE ERROR")
+                print("select_query_CONNECTION/CURSOR CLOSE ERROR")
         return data
+
+    def select_today_query(self):
+        data = []
+        try:
+            connection = psycopg2.connect(**self.__dict__)
+            cursor = connection.cursor()
+            try:
+                SELECT_QUERY = f"""
+                                SELECT isIncome, amount, from_to, description_, dt 
+                                FROM finances 
+                                WHERE DATE(dt) = CURRENT_DATE and isIncome = TRUE
+                                ORDER BY dt, amount;
+                                """
+                cursor.execute(SELECT_QUERY)
+                data.append(cursor.fetchall())
+                SELECT_QUERY = f"""
+                                SELECT isIncome, amount, from_to, description_, dt 
+                                FROM finances 
+                                WHERE DATE(dt) = CURRENT_DATE and isIncome = FALSE
+                                ORDER BY dt, amount;
+                                """
+                cursor.execute(SELECT_QUERY)
+                data.append(cursor.fetchall())
+            except psycopg2.Error:
+                print("select_today_query_EXECUTE ERROR")
+        except psycopg2.Error:
+            print("select_today_query_CONNECTION/CURSOR ERROR")
+        else:
+            try:
+                connection.commit()
+                cursor.close()
+                connection.close()
+            except psycopg2.Error:
+                print("select_today_query_CONNECTION/CURSOR CLOSE ERROR")
+        return data
+
 
     def __str__(self):
         for key, value in self.__dict__.items():

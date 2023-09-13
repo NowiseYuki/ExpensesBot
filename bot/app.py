@@ -2,147 +2,77 @@ import asyncio
 import logging
 import sys
 
-from aiogram.fsm.context import FSMContext
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from aiogram.utils.markdown import hbold
-
-from utils import DialogSM, Spending, start_keyboard, cancel_keyboard
+from aiogram.types import Message
 
 from db.db_manager import DBmanager
 from env_conf import BOT_TOKEN, DB_PARAMS
+from finance import Finance
+from keyboards import *
+from utils import check_add_template, get_today_finance_message, get_today_edit
 
 # Setting bot up
 TOKEN = BOT_TOKEN
 
 # Creating routers
-add_spending_router = Router(name="add_spending_router")
+base_router = Router(name="base_router")
 show_stats_router = Router(name="statistics_router")
 
 # Database manager
 db_manager = DBmanager(**DB_PARAMS)
 
 
-@add_spending_router.message(CommandStart())
-async def command_start_handler(message: Message) -> None:
-    await message.answer(f"Hello, {hbold(message.from_user.full_name)}!",
+@base_router.message(CommandStart())
+async def command_start(message: Message):
+    await message.answer("Приветствую!",
                          reply_markup=start_keyboard.as_markup(resize_keyboard=True))
 
 
-@show_stats_router.message(F.text.casefold() == "просмотреть статистику")
-async def show_statistics(message: Message):
-    data = db_manager.select_query(param=0)
-    await message.answer(
-        f"{data}"
-    )
+@base_router.message(F.text.casefold() == "финансы сегодня")
+async def show_finance_today(message: Message):
+    data = db_manager.select_today_query()
+    reply_message = get_today_finance_message(*data)
+    await message.answer(reply_message,
+                         parse_mode=ParseMode.HTML,
+                         reply_markup=ask_edit_keyboard.as_markup(resize_keyboard=True))
 
 
-@add_spending_router.message(F.text.casefold() == "отменить операцию")
-async def cancel_operation(message: Message, state):
-    await state.clear()
-    await message.answer(
-        "Операция успешно отменена!",
-        reply_markup=start_keyboard.as_markup(resize_keyboard=True),
-    )
+@base_router.message(F.text.casefold() == "редактировать")
+async def show_finance_today(message: Message):
+    data = db_manager.select_today_query()
+
+    list_income, list_expenses = get_today_edit(*data)
+
+    for fin in list_income:
+        await message.answer(fin,
+                             reply_markup=generate_inline_edit_keyboard(fin).as_markup())
+
+    for fin in list_expenses:
+        await message.answer(fin,
+                             reply_markup=generate_inline_edit_keyboard(fin).as_markup())
 
 
-@add_spending_router.message(F.text.casefold() == "добавить трату")
-async def add_spending(message: Message, state: FSMContext):
-    await state.set_state(DialogSM.title)
-    await message.answer(
-        "Введите название траты",
-        reply_markup=cancel_keyboard.as_markup(resize_keyboard=True)
-    )
+@base_router.message()
+async def add_finance(message: Message):
+    if check_add_template(message.text)[0]:
+        finance = Finance()
+        finance.set_attrs_by_list_param(*check_add_template(message.text))
+        db_manager.insert_query(finance)
+        reply_message = "<b>Расходы обновлены</b>"
 
+        if finance.get_isincome():
+            reply_message = "<b>Доходы обновлены</b>"
 
-@add_spending_router.message(DialogSM.title)
-async def add_price(message: Message, state: FSMContext):
-    await state.update_data(description=message.text)
-    await state.set_state(DialogSM.price)
-    await message.answer(
-        "Отлично! Теперь введите сумму в долларах",
-        reply_markup=cancel_keyboard.as_markup(resize_keyboard=True)
-    )
-
-
-@add_spending_router.message(DialogSM.price)
-async def ask_about_date(message: Message, state: FSMContext):
-    await state.update_data(price=message.text)
-    await state.set_state(DialogSM.date_guess)
-    await message.answer(
-        "Трата была совершена только что?",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[
-                [
-                    KeyboardButton(text="да"),
-                    KeyboardButton(text="нет"),
-                    KeyboardButton(text="Отменить операцию")
-                ]
-            ],
-            resize_keyboard=True,
-        )
-    )
-
-
-# Yes
-@add_spending_router.message(DialogSM.date_guess, F.text.casefold() == "да")
-async def auto_date(message: Message, state: FSMContext):
-    await save_spending(message, state)
-
-
-# No (step 1)
-@add_spending_router.message(DialogSM.date_guess, F.text.casefold() == "нет")
-async def enter_date(message: Message, state: FSMContext):
-    await state.set_state(DialogSM.enter_date)
-
-    await message.answer(
-        "Пожалуйста, введите дату в формате:\n"
-        "День.Месяц\n"
-        "Например - 10.09",
-        reply_markup=cancel_keyboard.as_markup(resize_keyboard=True),
-    )
-
-
-# No (step 2)
-@add_spending_router.message(DialogSM.enter_date)
-async def save_date(message: Message, state: FSMContext):
-    await state.update_data(enter_date=message.text)
-    await save_spending(message, state)
-
-
-# Если вместо Да/Нет было написано что-либо ещё
-@add_spending_router.message(DialogSM.date_guess)
-async def process_wrong_answer(message: Message):
-    if message.text not in ['да', 'нет']:
-        await message.reply("Введите либо 'Да', либо 'Нет'",
-                            reply_markup=cancel_keyboard.as_markup(resize_keyboard=True))
-
-
-# Save data
-async def save_spending(message: Message, state):
-    data = await state.get_data()
-    await state.clear()
-
-    spending_obj = Spending(data["description"], data["price"])
-    try:
-        if data["enter_date"]:
-            spending_obj.set_dt(data["enter_date"])
-    except KeyError:
-        print("Дата не была обновлена")
-
-    db_manager.insert_query(spending_obj)
-    await message.answer(
-        "Траты успешно обновлены!",
-        reply_markup=start_keyboard.as_markup(resize_keyboard=True),
-    )
+        await message.answer(f"{reply_message}",
+                             reply_markup=start_keyboard.as_markup(resize_keyboard=True))
 
 
 async def main() -> None:
     bot = Bot(BOT_TOKEN, parse_mode=ParseMode.HTML)
     dp = Dispatcher()
-    dp.include_routers(add_spending_router, show_stats_router)
+    dp.include_routers(base_router, show_stats_router)
     await dp.start_polling(bot)
 
 
